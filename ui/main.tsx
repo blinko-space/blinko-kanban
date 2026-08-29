@@ -206,7 +206,7 @@ function App() {
 
   return <main className="app-shell">
     <aside className={`board-list ${mobileList ? "mobile-open" : ""}`}>
-      <div className="brand"><span className="brand-mark"><Icon name="board" /></span><strong>{t("app")}</strong><button className="icon-button mobile-close" onClick={() => setMobileList(false)} aria-label={t("closeBoards")}><Icon name="close" /></button></div>
+      <button className="icon-button mobile-close" onClick={() => setMobileList(false)} aria-label={t("closeBoards")}><Icon name="close" /></button>
       <button className="primary-button" onClick={() => { setFormError(""); setBoardDialog({ mode: "create", title: "" }); }}><Icon name="plus" />{t("newBoard")}</button>
       <label className="search-field"><Icon name="search" size={16}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} aria-label={t("search")}/></label>
       <div className="board-rows">
