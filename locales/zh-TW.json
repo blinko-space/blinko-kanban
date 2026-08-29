@@ -1,0 +1,6 @@
+{
+  "app.name": "Blinko 看板",
+  "app.summary": "用專注而靈活的任務看板推動工作。",
+  "app.description": "建立多個看板，把任務整理到自訂欄位中，設定優先順序和截止日期，並安全儲存在你的 Blinko 帳戶裡。",
+  "kanban.open": "Blinko 看板"
+}

@@ -1,0 +1,6 @@
+{
+  "app.name": "Blinko Kanban",
+  "app.summary": "Move work forward on a focused, flexible task board.",
+  "app.description": "Create multiple Kanban boards, organize tasks into custom columns, set priorities and due dates, and keep everything safely in your Blinko account.",
+  "kanban.open": "Blinko Kanban"
+}
