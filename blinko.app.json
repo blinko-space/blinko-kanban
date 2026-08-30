@@ -1,6 +1,6 @@
 {
   "appId": "cloud.blinko.kanban",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minRuntimeApi": "1.0.0",
   "source": {
     "repository": "https://github.com/blinko-space/blinko-kanban",
@@ -16,7 +16,7 @@
   "targets": {
     "web": {
       "entry": "src/index.ts",
-      "minHostVersion": "1.0.0",
+      "minHostVersion": "1.1.0",
       "permissions": [],
       "optionalPermissions": []
     }
