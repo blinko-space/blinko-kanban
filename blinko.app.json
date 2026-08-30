@@ -90,7 +90,7 @@
         "surface": "sidebar",
         "handler": "kanban.workspace",
         "viewId": "kanban.workspace",
-        "icon": "app",
+        "icon": "tabler:layout-kanban",
         "titleKey": "kanban.open",
         "group": "productivity",
         "order": 42
