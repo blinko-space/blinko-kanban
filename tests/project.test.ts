@@ -18,8 +18,8 @@ import {
 } from "../ui/model";
 
 const root = resolve(import.meta.dirname, "..");
-const blinko = resolve(root, "../../packages/cli/dist/blinko.mjs");
-const runCli = (command: "validate" | "build") => execFileSync(process.execPath, [blinko, "extension", command, "."], { cwd: root, encoding: "utf8" });
+const blinko = resolve(root, "node_modules/.bin/blinko");
+const runCli = (command: "validate" | "build") => execFileSync(blinko, ["extension", command, "."], { cwd: root, encoding: "utf8" });
 
 describe("Blinko Kanban App", () => {
   it("declares a localized sidebar board with owned persistence and lexical search", () => {
