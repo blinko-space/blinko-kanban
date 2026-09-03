@@ -21,6 +21,7 @@ import {
   type KanbanBoard,
   type Priority,
 } from "./model";
+import { LatestEntityWriter } from "./optimistic-save";
 
 type BoardData = { title: string; cardText: string; document: string; createdAt: string; updatedAt: string };
 type EntityRecord<T = unknown> = {
@@ -84,6 +85,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
@@ -95,6 +97,7 @@ function App() {
   const [confirm, setConfirm] = useState<ConfirmDialog>();
   const [formError, setFormError] = useState("");
   const activeRef = useRef<EntityRecord<BoardData>>();
+  const writersRef = useRef(new Map<string, LatestEntityWriter<BoardData, EntityRecord<BoardData>>>());
 
   const recordsById = useMemo(() => new Map(records.map((record) => [record.id, record])), [records]);
   const activeRecord = activeId ? recordsById.get(activeId) : undefined;
@@ -122,31 +125,49 @@ function App() {
 
   useEffect(() => { document.title = t("app"); void load(); }, []);
 
-  const saveBoard = async (next: KanbanBoard) => {
-    const record = activeRef.current; if (!record || busy) return false;
-    setBusy(true); setNotice("");
-    try {
-      const updated = await host.entities.update<BoardData>(record.id, { data: boardData(next, record.data.createdAt), baseVersion: record.version });
-      setRecords((items) => items.map((item) => item.id === updated.id ? updated : item)); setConflict(false); return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (message.includes("VERSION_CONFLICT")) setConflict(true);
-      setNotice(message.includes("BOARD_TOO_LARGE") ? t("tooLarge") : t("saveFailed")); return false;
-    } finally { setBusy(false); }
+  const saveBoard = (next: KanbanBoard) => {
+    const record = activeRef.current; if (!record) return false;
+    setNotice(""); setConflict(false);
+    let writer = writersRef.current.get(record.id);
+    if (!writer) {
+      const updateRecord = (updated: EntityRecord<BoardData>) => {
+        activeRef.current = updated;
+        setRecords((items) => items.map((item) => item.id === updated.id ? updated : item));
+      };
+      writer = new LatestEntityWriter(record,
+        (id, data, baseVersion) => host.entities.update<BoardData>(id, { data, baseVersion }), {
+          onOptimistic: updateRecord,
+          onConfirmed: updateRecord,
+          onFailure: (confirmed, error) => {
+            updateRecord(confirmed);
+            const message = error instanceof Error ? error.message : "";
+            if (message.includes("VERSION_CONFLICT")) setConflict(true);
+            setNotice(message.includes("BOARD_TOO_LARGE") ? t("tooLarge") : t("saveFailed"));
+          },
+          onSavingChange: (saving) => setSavingIds((current) => {
+            const nextIds = new Set(current);
+            if (saving) nextIds.add(record.id); else nextIds.delete(record.id);
+            return nextIds;
+          }),
+        });
+      writersRef.current.set(record.id, writer);
+    }
+    writer.enqueue(boardData(next, record.data.createdAt));
+    return true;
   };
 
   const submitBoard = async () => {
     const title = boardDialog?.title.trim(); if (!boardDialog || !title) { setFormError(t("required")); return; }
-    setBusy(true); setFormError("");
+    setFormError("");
     try {
       if (boardDialog.mode === "create") {
+        setBusy(true);
         const board = createBoard(title, [locale === "en" ? "Backlog" : locale === "zh-TW" ? "待處理" : "待处理", locale === "en" ? "In progress" : locale === "zh-TW" ? "進行中" : "进行中", locale === "en" ? "Done" : "已完成"]);
         const now = new Date().toISOString();
         const created = await host.entities.create<BoardData>({ typeKey: BOARD_TYPE_KEY, data: boardData(board, now), idempotencyKey: `kanban:${crypto.randomUUID()}` });
         setRecords((items) => [created, ...items]); setActiveId(created.id); setMobileList(false);
       } else if (activeBoard) {
-        const next = { ...activeBoard, title }; setBusy(false);
-        if (!await saveBoard(next)) return;
+        if (!saveBoard({ ...activeBoard, title })) return;
       }
       setBoardDialog(undefined);
     } catch { setNotice(t("saveFailed")); }
@@ -157,7 +178,7 @@ function App() {
     if (!activeBoard || !columnDialog?.title.trim()) { setFormError(t("required")); return; }
     try {
       const next = columnDialog.columnId ? renameColumn(activeBoard, columnDialog.columnId, columnDialog.title) : addColumn(activeBoard, columnDialog.title);
-      if (await saveBoard(next)) setColumnDialog(undefined);
+      if (saveBoard(next)) setColumnDialog(undefined);
     } catch (error) { setFormError(error instanceof Error && error.message === "COLUMN_LIMIT" ? t("columnLimit") : t("saveFailed")); }
   };
 
@@ -165,7 +186,7 @@ function App() {
     if (!activeBoard || !cardDialog?.title.trim()) { setFormError(t("required")); return; }
     const input = { title: cardDialog.title, details: cardDialog.details, priority: cardDialog.priority, dueDate: cardDialog.dueDate };
     const next = cardDialog.cardId ? updateCard(activeBoard, cardDialog.cardId, input) : addCard(activeBoard, cardDialog.columnId, createCard(input));
-    if (await saveBoard(next)) setCardDialog(undefined);
+    if (saveBoard(next)) setCardDialog(undefined);
   };
 
   const executeDelete = async () => {
@@ -180,13 +201,13 @@ function App() {
       return;
     }
     const next = confirm.kind === "card" ? deleteCard(activeBoard, confirm.id) : deleteColumn(activeBoard, confirm.id);
-    if (await saveBoard(next)) setConfirm(undefined);
+    if (saveBoard(next)) setConfirm(undefined);
   };
 
-  const move = async (cardId: string, columnId: string, index?: number) => {
-    if (!activeBoard || busy) return;
+  const move = (cardId: string, columnId: string, index?: number) => {
+    if (!activeBoard) return;
     const next = moveCard(activeBoard, cardId, columnId, index);
-    if (next !== activeBoard) await saveBoard(next);
+    if (next !== activeBoard) saveBoard(next);
     setDraggedCard(undefined);
   };
 
@@ -194,7 +215,7 @@ function App() {
     if (!activeBoard) return;
     const found = findCard(activeBoard, cardId); if (!found) return;
     const sourceIndex = activeBoard.columns.findIndex((column) => column.id === found.column.id);
-    const target = activeBoard.columns[sourceIndex + direction]; if (target) void move(cardId, target.id);
+    const target = activeBoard.columns[sourceIndex + direction]; if (target) move(cardId, target.id);
   };
 
   const openCard = (columnId: string, cardId?: string) => {
@@ -221,7 +242,7 @@ function App() {
       <header className="workspace-bar">
         <button className="icon-button mobile-menu" onClick={() => setMobileList(true)} aria-label={t("openBoards")}><Icon name="menu"/></button>
         <div className="workspace-title"><strong>{activeBoard?.title ?? t("app")}</strong>{activeBoard && <span>{cardCount(activeBoard)} {t("tasks")}</span>}</div>
-        {busy && <span className="save-status" role="status"><i className="spinner"/>{t("saving")}</span>}
+        {activeId && savingIds.has(activeId) && <span className="save-status" role="status">{t("saving")}</span>}
         <div className="toolbar">
           {activeBoard && <><button className="secondary-button optional" disabled={busy || activeBoard.columns.length >= MAX_COLUMNS} onClick={() => { setFormError(""); setColumnDialog({ title: "" }); }}><Icon name="plus" size={16}/>{t("addColumn")}</button><button className="icon-button" disabled={busy} onClick={() => { setFormError(""); setBoardDialog({ mode: "rename", title: activeBoard!.title }); }} aria-label={t("renameBoard")} title={t("renameBoard")}><Icon name="pencil"/></button><button className="icon-button danger" disabled={busy} onClick={() => setConfirm({ kind: "board", id: activeRecord!.id, title: activeBoard!.title })} aria-label={t("deleteBoard")} title={t("deleteBoard")}><Icon name="trash"/></button></>}
         </div>
@@ -230,10 +251,10 @@ function App() {
       {notice && <div className="notice" role="alert"><span>{notice}</span><button onClick={() => setNotice("")} aria-label={t("dismiss")}><Icon name="close" size={15}/></button></div>}
       <div className="board-area">
         {loading ? <div className="empty" role="status">{t("loading")}</div> : loadError ? <div className="empty"><span className="empty-icon danger"><Icon name="alert" size={30}/></span><h1>{t("loadFailed")}</h1><button className="secondary-button" onClick={() => void load()}>{t("retry")}</button></div> : !records.length ? <div className="empty"><span className="empty-icon"><Icon name="board" size={32}/></span><h1>{t("noBoards")}</h1><p>{t("noBoardsBody")}</p><button className="primary-button" onClick={() => setBoardDialog({ mode: "create", title: "" })}><Icon name="plus"/>{t("createBoard")}</button></div> : !activeBoard ? <div className="empty" role="alert">{t("invalidBoard")}</div> : <div className="columns">
-          {activeBoard.columns.map((column, columnIndex) => <section key={column.id} className="column" onDragOver={(event) => { if (draggedCard) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); if (draggedCard) void move(draggedCard, column.id); }}>
+          {activeBoard.columns.map((column, columnIndex) => <section key={column.id} className="column" onDragOver={(event) => { if (draggedCard) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); if (draggedCard) move(draggedCard, column.id); }}>
             <header className="column-head"><button className="column-title" disabled={busy} onClick={() => { setFormError(""); setColumnDialog({ columnId: column.id, title: column.title }); }} title={t("renameColumn")}>{column.title}</button><span>{column.cards.length}</span><button className="icon-button subtle" disabled={busy || activeBoard!.columns.length <= 1} onClick={() => setConfirm({ kind: "column", id: column.id, title: column.title })} aria-label={t("deleteColumn")} title={t("deleteColumn")}><Icon name="trash" size={15}/></button></header>
             <div className="cards">
-              {column.cards.map((card, cardIndex) => <article key={card.id} className={`task-card priority-${card.priority} ${draggedCard === card.id ? "dragging" : ""}`} draggable={!busy} onDragStart={(event) => { setDraggedCard(card.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", card.id); }} onDragEnd={() => setDraggedCard(undefined)} onDragOver={(event) => { if (draggedCard) { event.preventDefault(); event.stopPropagation(); } }} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); if (draggedCard) void move(draggedCard, column.id, cardIndex); }}>
+              {column.cards.map((card, cardIndex) => <article key={card.id} className={`task-card priority-${card.priority} ${draggedCard === card.id ? "dragging" : ""}`} draggable={!busy} onDragStart={(event) => { setDraggedCard(card.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", card.id); }} onDragEnd={() => setDraggedCard(undefined)} onDragOver={(event) => { if (draggedCard) { event.preventDefault(); event.stopPropagation(); } }} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); if (draggedCard) move(draggedCard, column.id, cardIndex); }}>
                 <div className="card-top"><span className="drag-handle" aria-label={t("dragTask")}><Icon name="grip" size={16}/></span><button className="card-title" onClick={() => openCard(column.id, card.id)} disabled={busy}>{card.title}</button><button className="icon-button subtle" onClick={() => openCard(column.id, card.id)} disabled={busy} aria-label={t("edit")}><Icon name="pencil" size={15}/></button></div>
                 {card.details && <p>{card.details}</p>}
                 <footer><div className="card-meta">{card.priority !== "none" && <span className={`priority priority-${card.priority}`}>{t(`priority${card.priority[0]!.toUpperCase()}${card.priority.slice(1)}`)}</span>}{card.dueDate && <span className={`due ${new Date(`${card.dueDate}T23:59:59`).getTime() < Date.now() ? "late" : ""}`}><Icon name="calendar" size={13}/>{relativeDate(card.dueDate)}</span>}</div><div className="move-actions"><button disabled={busy || columnIndex === 0} onClick={() => moveSide(card.id, -1)} aria-label={t("moveLeft")} title={t("moveLeft")}><Icon name="left" size={15}/></button><button disabled={busy || columnIndex === activeBoard!.columns.length - 1} onClick={() => moveSide(card.id, 1)} aria-label={t("moveRight")} title={t("moveRight")}><Icon name="right" size={15}/></button><button className="danger" disabled={busy} onClick={() => setConfirm({ kind: "card", id: card.id, title: card.title })} aria-label={t("deleteTask")} title={t("deleteTask")}><Icon name="trash" size={14}/></button></div></footer>

@@ -1,6 +1,6 @@
 {
   "appId": "cloud.blinko.kanban",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minRuntimeApi": "1.0.0",
   "source": {
     "repository": "https://github.com/blinko-space/blinko-kanban",
